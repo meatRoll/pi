@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `PI_LATEST_VERSION_URL` to override the latest-version URL used by the automatic update check and `pi update`. The default now reads this fork's `packages/coding-agent/package.json` on `main` instead of `pi.dev`, so update notices track the fork rather than upstream.
+
 ### Fixed
 
 - Fixed pi exiting with an uncaught `AbortError` when a `read` tool call is cancelled while the file is being opened ([#11956](https://github.com/earendil-works/pi/issues/11956))

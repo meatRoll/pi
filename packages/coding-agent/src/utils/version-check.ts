@@ -2,7 +2,8 @@ import { compare, valid } from "semver";
 import { fetchWithRetry } from "./management-http.ts";
 import { getPiUserAgent } from "./pi-user-agent.ts";
 
-const LATEST_VERSION_URL = "https://pi.dev/api/latest-version";
+const DEFAULT_LATEST_VERSION_URL =
+	"https://raw.githubusercontent.com/meatRoll/pi/main/packages/coding-agent/package.json";
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
 
 export interface LatestPiRelease {
@@ -48,6 +49,11 @@ export function isNewerPackageVersion(candidateVersion: string, currentVersion: 
 	return candidateVersion.trim() !== currentVersion.trim();
 }
 
+/** Latest-version endpoint: `PI_LATEST_VERSION_URL` overrides the default so a fork can track its own version. */
+export function getLatestVersionUrl(): string {
+	return process.env.PI_LATEST_VERSION_URL?.trim() || DEFAULT_LATEST_VERSION_URL;
+}
+
 export async function getLatestPiRelease(
 	currentVersion: string,
 	options: { timeoutMs?: number; retry?: boolean } = {},
@@ -55,7 +61,7 @@ export async function getLatestPiRelease(
 	if (process.env.PI_OFFLINE) return undefined;
 
 	const response = await fetchWithRetry(
-		LATEST_VERSION_URL,
+		getLatestVersionUrl(),
 		{
 			headers: {
 				"User-Agent": getPiUserAgent(currentVersion),
