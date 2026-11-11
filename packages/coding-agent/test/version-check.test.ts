@@ -10,6 +10,7 @@ import {
 import { allowNetwork } from "./test-network-env.ts";
 
 const originalSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
+const originalLatestVersionUrl = process.env.PI_LATEST_VERSION_URL;
 
 beforeEach(() => {
 	allowNetwork();
@@ -21,6 +22,11 @@ afterEach(() => {
 		delete process.env.PI_SKIP_VERSION_CHECK;
 	} else {
 		process.env.PI_SKIP_VERSION_CHECK = originalSkipVersionCheck;
+	}
+	if (originalLatestVersionUrl === undefined) {
+		delete process.env.PI_LATEST_VERSION_URL;
+	} else {
+		process.env.PI_LATEST_VERSION_URL = originalLatestVersionUrl;
 	}
 });
 
@@ -42,19 +48,31 @@ describe("version checks", () => {
 		await expect(checkForNewPiVersion("1.2.2")).resolves.toEqual({ version: "1.2.3" });
 	});
 
-	it("uses the pi.dev version check api with a pi user agent", async () => {
+	it("uses the fork package.json as the default version check api with a pi user agent", async () => {
 		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.4" }));
 		vi.stubGlobal("fetch", fetchMock);
 
 		await expect(getLatestPiVersion("1.2.3")).resolves.toBe("1.2.4");
 		expect(fetchMock).toHaveBeenCalledWith(
-			"https://pi.dev/api/latest-version",
+			"https://raw.githubusercontent.com/meatRoll/pi/main/packages/coding-agent/package.json",
 			expect.objectContaining({
 				headers: expect.objectContaining({
 					"User-Agent": expect.stringMatching(/^pi\/1\.2\.3 /),
 					accept: "application/json",
 				}),
 			}),
+		);
+	});
+
+	it("uses PI_LATEST_VERSION_URL when set", async () => {
+		process.env.PI_LATEST_VERSION_URL = "https://example.com/pi-latest.json";
+		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.4" }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(getLatestPiVersion("1.2.3")).resolves.toBe("1.2.4");
+		expect(fetchMock).toHaveBeenCalledWith(
+			"https://example.com/pi-latest.json",
+			expect.objectContaining({ headers: expect.objectContaining({ accept: "application/json" }) }),
 		);
 	});
 
