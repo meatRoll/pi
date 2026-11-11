@@ -1,4 +1,4 @@
-import type { Terminal, WheelScrollLines } from "@earendil-works/pi-tui";
+import type { CapturedOutputStream, Terminal, WheelScrollLines } from "@earendil-works/pi-tui";
 import { ProcessTerminal, type TUI, TuiAltScreen, TuiMainScreen } from "@earendil-works/pi-tui";
 import { copyToClipboard } from "../../utils/clipboard.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
@@ -13,6 +13,11 @@ export interface InteractiveTuiOptions {
 	readonly onRightClickPaste?: () => void;
 	readonly fullscreenCopyOnSelect?: boolean;
 	readonly fullscreenWheelScrollLines?: WheelScrollLines;
+	/**
+	 * Receives writes that reach stdout/stderr while the TUI owns the terminal without
+	 * coming from rendering, e.g. console output from extension code.
+	 */
+	readonly onCapturedOutput?: (text: string, stream: CapturedOutputStream) => void;
 }
 
 /** Composition root shared by coding-agent presentations. */
@@ -20,7 +25,7 @@ export function createInteractiveTui(options: InteractiveTuiOptions & { readonly
 export function createInteractiveTui(options: InteractiveTuiOptions & { readonly tuiMode: "regular" }): TuiMainScreen;
 export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScreen | TuiAltScreen;
 export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScreen | TuiAltScreen {
-	const terminal = options.terminal ?? new ProcessTerminal();
+	const terminal = options.terminal ?? new ProcessTerminal({ onCapturedOutput: options.onCapturedOutput });
 	if (options.tuiMode === "fullscreen") {
 		const styleSearchMatch = (text: string) => theme.bg("searchMatchBg", theme.fg("searchMatchText", text));
 		return new TuiAltScreen(terminal, options.showHardwareCursor, options.logDirectory, {
