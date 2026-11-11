@@ -62,6 +62,7 @@ import {
 	detectInstallChange,
 	getAgentDir,
 	getAuthPath,
+	getCapturedOutputLogPath,
 	getDebugLogPath,
 	getDocsPath,
 	VERSION,
@@ -143,11 +144,13 @@ import { stripBom } from "../../utils/text.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
 import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
 import { reportBug } from "./bug-report.ts";
+import { CAPTURED_OUTPUT_ENTRY_TYPE, type CapturedOutputEntryData, CapturedOutputSink } from "./captured-output.ts";
 import { createChatViewport } from "./chat-viewport.ts";
 import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
+import { renderCapturedOutputEntry } from "./components/captured-output-entry.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
@@ -469,6 +472,9 @@ interface ExtensionChangelogUpdate {
 export class InteractiveMode {
 	private runtimeHost: AgentSessionRuntime;
 	private renderer: TuiMainScreen | TuiAltScreen;
+	/** Turns output captured by the terminal into durable, quiet transcript entries. */
+	private readonly capturedOutput: CapturedOutputSink;
+	private readonly capturedOutputLogPath: string;
 	private ui: TUI;
 	private mainScreenRenderState: TuiMainScreenRenderState | undefined;
 	private loadedResourcesContainer: Container;
@@ -647,6 +653,12 @@ export class InteractiveMode {
 			this.themeController.applyFromSettings();
 		});
 		this.version = VERSION;
+		this.capturedOutputLogPath = getCapturedOutputLogPath();
+		this.capturedOutput = new CapturedOutputSink({
+			logPath: this.capturedOutputLogPath,
+			appendToLog: (text) => this.appendCapturedOutputToLog(text),
+			onEntry: (data) => this.appendCapturedOutputEntry(data),
+		});
 		this.renderer = createInteractiveTui({
 			tuiMode,
 			showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
@@ -655,6 +667,7 @@ export class InteractiveMode {
 			onRightClickPaste: this.onRightClickPaste,
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
+			onCapturedOutput: (text, stream) => this.capturedOutput.push(text, stream),
 		});
 		this.ui = createInteractiveTuiReference(() => this.renderer);
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
@@ -3983,8 +3996,43 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	/**
+	 * Full captured text goes to the log file, unconditionally and before any clipping.
+	 * A failing log write must never throw back into the terminal's write path.
+	 */
+	private appendCapturedOutputToLog(text: string): void {
+		try {
+			fs.mkdirSync(path.dirname(this.capturedOutputLogPath), { recursive: true });
+			fs.appendFileSync(this.capturedOutputLogPath, text, { encoding: "utf8" });
+		} catch {
+			// Losing the log is better than breaking the captured writer.
+		}
+	}
+
+	/**
+	 * Store one batch of captured output as a durable transcript entry. Custom entries are
+	 * rendered when written and replayed on resume, but never reach the model.
+	 */
+	private appendCapturedOutputEntry(data: CapturedOutputEntryData): void {
+		try {
+			const entryId = this.sessionManager.appendCustomEntry(CAPTURED_OUTPUT_ENTRY_TYPE, data);
+			const entry = this.sessionManager.getEntry(entryId);
+			if (entry && entry.type === "custom") {
+				this.addCustomEntryToChat(entry);
+			}
+			this.ui.requestRender();
+		} catch {
+			// The session may be closing; the log file already holds the text.
+		}
+	}
+
 	private addCustomEntryToChat(entry: Extract<SessionEntry, { type: "custom" }>): void {
-		const renderer = this.session.extensionRunner.getEntryRenderer(entry.customType);
+		// Captured terminal output is a core-owned entry, so its renderer ships with pi
+		// instead of coming from an extension.
+		const renderer =
+			entry.customType === CAPTURED_OUTPUT_ENTRY_TYPE
+				? renderCapturedOutputEntry
+				: this.session.extensionRunner.getEntryRenderer(entry.customType);
 		if (!renderer) {
 			return;
 		}
@@ -4475,6 +4523,9 @@ export class InteractiveMode {
 	private async shutdown(options?: { fromSignal?: boolean }): Promise<void> {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
+		// Turn anything still buffered into a log line and a transcript entry before the
+		// terminal is restored and the capture stops.
+		this.capturedOutput.dispose();
 		// Keep signal handlers registered until terminal cleanup has completed.
 		// `signal-exit` checks the listener list during the same SIGTERM/SIGHUP
 		// dispatch and re-sends the signal if only its own listeners remain.
