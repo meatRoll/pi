@@ -1,5 +1,5 @@
 import type { Component } from "@earendil-works/pi-tui";
-import { Box, Container, Spacer, Text } from "@earendil-works/pi-tui";
+import { Box, Container, MouseRegion, Spacer, Text } from "@earendil-works/pi-tui";
 import type { EntryRenderer } from "../../../core/extensions/types.ts";
 import type { CustomEntry } from "../../../core/session-manager.ts";
 import { theme } from "../theme/theme.ts";
@@ -8,6 +8,7 @@ import { keyHint, keyText } from "./keybinding-hints.ts";
 /**
  * Component that renders a custom session entry from extensions.
  * The host owns transcript spacing; renderer output should provide only its content.
+ * Clicking the entry toggles this entry alone; the global expand key still sets all of them.
  */
 export class CustomEntryComponent extends Container {
 	private entry: CustomEntry<unknown>;
@@ -65,6 +66,14 @@ export class CustomEntryComponent extends Container {
 
 		this.customComponent = component;
 		this.addChild(new Spacer(1));
-		this.addChild(component);
+		// A click expands or collapses this entry without changing the global tools-expand state.
+		// The wrapped component gets the event first, so its own controls keep working.
+		this.addChild(
+			new MouseRegion(component, (event) => {
+				if (event.type !== "click" || event.button !== "left") return undefined;
+				this.setExpanded(!this._expanded);
+				return { handled: true };
+			}),
+		);
 	}
 }
