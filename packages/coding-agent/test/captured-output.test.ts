@@ -1,8 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { TuiMouseEvent } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
-import { buildSessionContext, SessionManager } from "../src/core/session-manager.ts";
+import { buildSessionContext, type CustomEntry, SessionManager } from "../src/core/session-manager.ts";
 import {
 	CAPTURED_OUTPUT_ENTRY_TYPE,
 	type CapturedOutputEntryData,
@@ -11,7 +12,9 @@ import {
 	formatCapturedBytes,
 } from "../src/modes/interactive/captured-output.ts";
 import { renderCapturedOutputEntry } from "../src/modes/interactive/components/captured-output-entry.ts";
+import { CustomEntryComponent } from "../src/modes/interactive/components/custom-entry.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../src/utils/ansi.ts";
 
 function createSink(options: { maxEntries?: number; maxEntryBytes?: number; maxBufferBytes?: number } = {}) {
 	const entries: CapturedOutputEntryData[] = [];
@@ -197,5 +200,64 @@ describe("captured output entry in the session", () => {
 				.join("\n") ?? "";
 		expect(expanded).toContain("error: No such remote 'origin'");
 		expect(expanded).toContain("/tmp/pi-captured-output.log");
+	});
+});
+
+describe("clicking a captured output entry", () => {
+	function capturedEntry(id: string, text: string): CustomEntry<CapturedOutputEntryData> {
+		return {
+			type: "custom",
+			customType: CAPTURED_OUTPUT_ENTRY_TYPE,
+			id,
+			parentId: null,
+			timestamp: "",
+			data: {
+				stream: "stderr",
+				writes: 1,
+				bytes: Buffer.byteLength(text, "utf8"),
+				text,
+				truncated: false,
+				dropped: 0,
+				logPath: "/tmp/pi-captured-output.log",
+			},
+		};
+	}
+
+	function clickLine(component: CustomEntryComponent, marker: string): void {
+		const lines = component.render(120);
+		const y = lines.findIndex((line) => stripAnsi(line).includes(marker));
+		expect(y).toBeGreaterThanOrEqual(0);
+		const event: TuiMouseEvent = {
+			type: "click",
+			button: "left",
+			x: 2,
+			y,
+			screenX: 2,
+			screenY: y,
+			width: 120,
+			height: lines.length,
+			shift: false,
+			alt: false,
+			ctrl: false,
+			clickCount: 1,
+		};
+		expect(component.handleMouse(event)?.handled).toBe(true);
+	}
+
+	it("toggles one entry and leaves the others alone", () => {
+		initTheme("dark");
+		const first = new CustomEntryComponent(capturedEntry("1", "first captured text\n"), renderCapturedOutputEntry);
+		const second = new CustomEntryComponent(capturedEntry("2", "second captured text\n"), renderCapturedOutputEntry);
+		const text = (component: CustomEntryComponent) => stripAnsi(component.render(120).join("\n"));
+
+		expect(text(first)).not.toContain("first captured text");
+		expect(text(second)).not.toContain("second captured text");
+
+		clickLine(first, "captured");
+		expect(text(first)).toContain("first captured text");
+		expect(text(second)).not.toContain("second captured text");
+
+		clickLine(first, "captured");
+		expect(text(first)).not.toContain("first captured text");
 	});
 });
